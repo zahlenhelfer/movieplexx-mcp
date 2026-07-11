@@ -6,7 +6,10 @@ services:
     environment:
       POLL_INTERVAL_SECONDS: "3600"     # once per hour
       USER_AGENT: "MovieplexxProgrammMirror/0.1 (+kontakt@zahlenhelfer.de)"
+      METRICS_PORT: "9000"
       LOG_LEVEL: INFO
+    ports:
+      - "9000:9000"                     # Prometheus /metrics
     volumes:
       - moviedata:/data
     restart: unless-stopped

@@ -43,6 +43,7 @@ DB_PATH=./movieplexx.db uv run movieplexx serve       # MCP server over stdio
 | `TARGET_URL` | `.../programm/api/filtered-films` | Source endpoint |
 | `USER_AGENT` | `MovieplexxProgrammMirror/0.1 (+kontakt@zahlenhelfer.de)` | Self-identifying UA |
 | `POLL_INTERVAL_SECONDS` | `3600` | Loop interval for `scrape --loop` |
+| `METRICS_PORT` | `9000` | Prometheus endpoint port in loop mode (`<=0` disables) |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 ## MCP tools
@@ -64,6 +65,27 @@ The MCP server is typically launched on demand by the client, e.g.:
 ```bash
 docker run -i --rm -v moviedata:/data:ro movieplexx-mcp serve
 ```
+
+## Metrics
+
+In loop mode the scraper serves Prometheus metrics on `:${METRICS_PORT}/metrics`:
+
+- `movieplexx_scrape_success_total` / `movieplexx_scrape_failure_total`
+- `movieplexx_scrape_duration_seconds` (histogram)
+- `movieplexx_films_seen` / `movieplexx_performances_seen` (last cycle)
+- `movieplexx_parse_errors_total` — increments on a film that fails to normalize;
+  alert on `> 0` to catch upstream schema drift.
+
+## Tests
+
+```bash
+uv run pytest
+```
+
+`tests/test_contract.py` parses a checked-in golden snapshot
+(`tests/fixtures/filtered-films.golden.json`) and asserts the exact field shape
+the normalizer relies on. A failure means the upstream JSON drifted — regenerate
+the snapshot (command in the test's docstring) once the change is understood.
 
 ## Etiquette
 

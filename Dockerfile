@@ -16,6 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     TARGET_URL=https://movieplexx.de/programm/api/filtered-films \
     POLL_INTERVAL_SECONDS=3600 \
     USER_AGENT="MovieplexxProgrammMirror/0.1 (+kontakt@zahlenhelfer.de)" \
+    METRICS_PORT=9000 \
     LOG_LEVEL=INFO
 
 RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app \
