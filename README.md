@@ -24,8 +24,9 @@ scraper (CLI)  ── hourly ──▶  SQLite (volume)  ── read-only ──
 
 - `src/movieplexx/scrape.py` — HTTP fetch + normalization of the API response
 - `src/movieplexx/store.py` — SQLite schema, upsert, append-only history
-- `src/movieplexx/cli.py` — `scrape [--loop]`, `serve`
+- `src/movieplexx/cli.py` — `scrape [--loop]`, `serve`, `connect`
 - `src/movieplexx/server.py` — FastMCP tools
+- `src/movieplexx/proxy.py` — stdio↔HTTP client-side bridge for `connect`
 
 ## Local usage
 
@@ -122,11 +123,13 @@ docker compose up -d mcp
 
 Register the remote server with your local Claude:
 
-**Claude Code (CLI)** — native HTTP transport:
+**Claude Code (CLI)** — via `movieplexx connect`, a local stdio↔HTTP bridge that
+builds the `Authorization: Bearer` header for you. Only `MCP_AUTH_TOKEN` needs
+to be supplied as a plain parameter:
 
 ```bash
-claude mcp add --transport http movieplexx http://192.168.1.50:8000/mcp \
-  --header "Authorization: Bearer <TOKEN>"
+claude mcp add movieplexx --env MCP_AUTH_TOKEN=<TOKEN> \
+  -- uv run --directory /absolute/path/to/movieplexx-mcp movieplexx connect http://192.168.1.50:8000/mcp
 ```
 
 **Claude Desktop** — via the `mcp-remote` stdio↔HTTP bridge. Pass the full header
@@ -152,7 +155,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://192.168.1.50:8000/mcp   # 401
 ```
 
 This is intended for a trusted LAN. For off-LAN access put Tailscale/WireGuard in
-front; for public exposure add a TLS reverse proxy. See `spec.md` §10.
+front; for public exposure add a TLS reverse proxy. See `spec.md` §10 and §11.
 
 ## Container image (GHCR)
 

@@ -756,3 +756,133 @@ Whitespace-Splitting bei `--header` zu umgehen:
 6. README: Abschnitt „Remote-Serving auf NAS" inkl. beider Client-Configs.
 7. Smoke-Test: `curl` ohne Token → 401, mit Token → MCP-Handshake; danach
    `claude mcp add` gegen die LAN-IP.
+
+---
+
+## 11. Feature: Client-seitiger Stdio↔HTTP-Proxy für Claude Code (`movieplexx connect`)
+
+Stand: 2026-07-11 · Ziel: Registrierung des NAS-Servers bei **Claude Code** so
+vereinfachen, dass der Nutzer nur noch `MCP_AUTH_TOKEN` als Parameter setzt,
+statt den vollständigen `Authorization: Bearer <TOKEN>`-Header von Hand zu
+tippen.
+
+### 11.1 Ausgangslage
+
+§10.5 registriert den NAS-Server bei Claude Code über den **nativen
+HTTP-Transport**:
+
+```bash
+claude mcp add --transport http movieplexx http://192.168.1.50:8000/mcp \
+  --header "Authorization: Bearer <TOKEN>"
+```
+
+Das funktioniert, verlangt aber, dass der Nutzer den kompletten Header-String
+(inkl. `Bearer `-Präfix) selbst zusammensetzt und in der Kommandozeile trägt.
+Ziel dieses Features: der Nutzer übergibt nur den rohen Token als
+Umgebungsvariable; das Zusammensetzen des Bearer-Headers übernimmt ein neuer,
+lokaler Wrapper.
+
+**Scope-Entscheidung:** nur **Claude Code CLI**. Claude Desktop bleibt bei der
+in §10.5 dokumentierten `mcp-remote`-Bridge unverändert.
+
+### 11.2 Architektur
+
+Ein neuer Subcommand `movieplexx connect <url>` läuft **lokal** beim Client
+(stdio-Transport, von Claude Code wie gewohnt als Prozess gespawnt) und
+verhält sich nach außen wie ein normaler stdio-MCP-Server. Intern verbindet er
+sich als **MCP-Client** zum entfernten Streamable-HTTP-Server auf dem NAS und
+reicht `list_tools`/`call_tool`-Aufrufe transparent durch:
+
+```
+Claude Code ──stdio──▶ movieplexx connect ──HTTP + Bearer──▶ NAS (mcp, §10)
+                        (liest MCP_AUTH_TOKEN
+                         aus der Umgebung)
+```
+
+Da `server.py` ausschließlich Tools exponiert (keine Resources/Prompts,
+siehe §5), muss der Proxy nur `ListToolsRequest` und `CallToolRequest`
+weiterleiten — kein generischer Protokoll-Proxy nötig. Das hält die
+Implementierung klein (~70–100 Zeilen) und nutzt ausschließlich Bausteine,
+die über die bestehende `mcp`-Abhängigkeit bereits vorhanden sind
+(`mcp.client.streamable_http`, `mcp.client.session.ClientSession`,
+`mcp.server.lowlevel.Server`, `mcp.server.stdio.stdio_server`) — keine neue
+Dependency.
+
+```python
+# src/movieplexx/proxy.py (neu, Skizze)
+import os
+from mcp import types
+from mcp.client.session import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
+from mcp.server.lowlevel import Server
+from mcp.server.stdio import stdio_server
+
+async def run_proxy(url: str) -> None:
+    token = os.environ.get("MCP_AUTH_TOKEN")
+    if not token:                                    # fail-closed, wie Server-Seite
+        raise SystemExit("MCP_AUTH_TOKEN is required for `movieplexx connect`")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    async with streamablehttp_client(url, headers=headers) as (read, write, _):
+        async with ClientSession(read, write) as remote:
+            await remote.initialize()
+
+            local = Server("movieplexx-proxy")
+
+            @local.list_tools()
+            async def _list_tools():
+                return (await remote.list_tools()).tools
+
+            @local.call_tool()
+            async def _call_tool(name: str, arguments: dict):
+                result = await remote.call_tool(name, arguments)
+                return result.content
+
+            async with stdio_server() as (in_stream, out_stream):
+                await local.run(in_stream, out_stream, local.create_initialization_options())
+```
+
+### 11.3 CLI-Änderung
+
+Neuer Subcommand in `cli.py`, analog zu `serve`:
+
+```bash
+movieplexx connect <url>          # z.B. http://192.168.1.50:8000/mcp
+```
+
+Konfiguration ausschließlich über die bestehende Variable `MCP_AUTH_TOKEN`
+(kein neues Env-Var-Vokabular) — fail-closed wie in §10.2.
+
+### 11.4 Client-Registrierung (vereinfacht)
+
+```bash
+claude mcp add movieplexx --env MCP_AUTH_TOKEN=<TOKEN> -- movieplexx connect http://192.168.1.50:8000/mcp
+```
+
+Kein `--transport http`, kein manuell zusammengesetzter `--header`-String mehr
+— Claude Code startet `movieplexx connect` wie jeden anderen stdio-Server,
+der Token wandert als einfacher Parameter (`--env`) statt als Teil eines
+Header-Strings.
+
+### 11.5 Sicherheits-Überlegungen
+
+- Kein neuer Vertrauensbereich: der Token verlässt weiterhin nur den
+  lokalen Client-Prozess und das LAN zum NAS, exakt wie in §10.6.
+- Der Token liegt weiterhin **cleartext** in der lokalen Claude-Code-Config
+  (`--env`) — das ist eine Ergonomie-, keine Security-Verbesserung gegenüber
+  §10.5. Gleiches Risikoprofil wie der bisherige `--header`-Ansatz.
+- `movieplexx connect` validiert nichts zusätzlich; die eigentliche
+  Autorisierung bleibt Aufgabe der Server-seitigen `BearerAuth`-Middleware
+  (§10.3).
+
+### 11.6 Umsetzungs-Checkliste
+
+1. `src/movieplexx/proxy.py` mit `run_proxy()` (Skizze siehe §11.2) anlegen.
+2. `cli.py` um Subcommand `connect <url>` erweitern (ruft `run_proxy` per
+   `asyncio.run`).
+3. README: Claude-Code-Abschnitt in §10.5-Pendant durch die vereinfachte
+   `claude mcp add ... --env MCP_AUTH_TOKEN=...`-Variante ersetzen; Claude
+   Desktop-Abschnitt bleibt unverändert.
+4. Smoke-Test: `movieplexx connect` lokal gegen den laufenden NAS-`mcp`-Service
+   starten, `list_showtimes` über den Proxy aufrufen und mit direktem
+   HTTP-Aufruf vergleichen.
