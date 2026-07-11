@@ -54,6 +54,40 @@ DB_PATH=./movieplexx.db uv run movieplexx serve       # MCP server over stdio
 - `search_films(query)` — substring search over title/genre/director/distributor
 - `film_history(film_slug)` — append-only scrape history (sold-out / status drift)
 
+## Registering with an MCP client
+
+The server speaks stdio. Add it to your client's server config (e.g. Claude
+Desktop's `claude_desktop_config.json`). It only **reads** the DB, so populate it
+first with at least one `scrape`.
+
+Local (via `uv`):
+
+```json
+{
+  "mcpServers": {
+    "movieplexx": {
+      "command": "uv",
+      "args": ["run", "movieplexx", "serve"],
+      "cwd": "/absolute/path/to/movieplexx-mcp",
+      "env": { "DB_PATH": "/absolute/path/to/movieplexx-mcp/movieplexx.db" }
+    }
+  }
+}
+```
+
+Docker (reads the shared `moviedata` volume the scraper writes):
+
+```json
+{
+  "mcpServers": {
+    "movieplexx": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-v", "moviedata:/data:ro", "movieplexx-mcp", "serve"]
+    }
+  }
+}
+```
+
 ## Docker
 
 ```bash
