@@ -72,6 +72,7 @@ def cmd_serve(_args: argparse.Namespace) -> int:
 
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "stdio":
+        log.info("serving MCP over stdio")
         mcp.run()  # local process, spawned by the client
         return 0
     if transport == "http":
