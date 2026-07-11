@@ -7,7 +7,9 @@ import logging
 import os
 import sys
 import time
+from time import perf_counter
 
+from . import metrics
 from . import scrape as scrape_mod
 from . import store
 
@@ -22,15 +24,31 @@ def _setup_logging() -> None:
 
 
 def run_scrape_once() -> dict[str, int]:
-    """One fetch + normalize + persist cycle."""
-    films, performances = scrape_mod.scrape()
-    conn = store.connect()
+    """One fetch + normalize + persist cycle, instrumented for Prometheus."""
+    start = perf_counter()
     try:
-        store.init_db(conn)
-        counts = store.save(conn, films, performances)
+        films, performances, stats = scrape_mod.scrape()
+        conn = store.connect()
+        try:
+            store.init_db(conn)
+            counts = store.save(conn, films, performances)
+        finally:
+            conn.close()
+    except Exception:
+        metrics.SCRAPE_FAILURE.inc()
+        raise
     finally:
-        conn.close()
-    log.info("scrape ok: %d films, %d performances", counts["films"], counts["performances"])
+        metrics.SCRAPE_DURATION.observe(perf_counter() - start)
+
+    metrics.SCRAPE_SUCCESS.inc()
+    metrics.FILMS_SEEN.set(counts["films"])
+    metrics.PERFORMANCES_SEEN.set(counts["performances"])
+    if stats["parse_errors"]:
+        metrics.PARSE_ERRORS.inc(stats["parse_errors"])
+    log.info(
+        "scrape ok: %d films, %d performances, %d parse errors",
+        counts["films"], counts["performances"], stats["parse_errors"],
+    )
     return counts
 
 
@@ -39,6 +57,7 @@ def cmd_scrape(args: argparse.Namespace) -> int:
     if not args.loop:
         run_scrape_once()
         return 0
+    metrics.start_metrics_server()
     log.info("starting scrape loop, interval=%ds", interval)
     while True:
         try:

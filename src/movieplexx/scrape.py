@@ -8,11 +8,14 @@ and keep the raw source object on each row for schema-drift resilience.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+
+log = logging.getLogger("movieplexx.scrape")
 
 DEFAULT_URL = "https://movieplexx.de/programm/api/filtered-films"
 DEFAULT_UA = "MovieplexxProgrammMirror/0.1 (+kontakt@zahlenhelfer.de)"
@@ -102,21 +105,34 @@ def normalize_performances(film: dict[str, Any], scraped_at: str) -> list[dict[s
 
 
 def normalize(data: dict[str, Any], scraped_at: str | None = None
-              ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return (films, performances) normalized from a raw API response."""
+              ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
+    """Return (films, performances, stats) normalized from a raw API response.
+
+    stats carries {"parse_errors", "films_skipped"} so callers can surface
+    schema drift (a film that fails to normalize) as a metric/alert without the
+    whole scrape crashing.
+    """
     scraped_at = scraped_at or _now_iso()
     films: list[dict[str, Any]] = []
     performances: list[dict[str, Any]] = []
+    parse_errors = 0
+    films_skipped = 0
     for film in data.get("films") or []:
         if not film.get("slug"):
+            films_skipped += 1
             continue
-        films.append(normalize_film(film, scraped_at))
-        performances.extend(normalize_performances(film, scraped_at))
-    return films, performances
+        try:
+            films.append(normalize_film(film, scraped_at))
+            performances.extend(normalize_performances(film, scraped_at))
+        except Exception:  # noqa: BLE001 - one bad film must not lose the rest
+            parse_errors += 1
+            log.exception("failed to normalize film slug=%s", film.get("slug"))
+    stats = {"parse_errors": parse_errors, "films_skipped": films_skipped}
+    return films, performances, stats
 
 
 def scrape(url: str | None = None, user_agent: str | None = None
-           ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+           ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, int]]:
     """Fetch live and normalize in one call."""
     scraped_at = _now_iso()
     data = fetch_raw(url, user_agent)
