@@ -100,6 +100,37 @@ The MCP server is typically launched on demand by the client, e.g.:
 docker run -i --rm -v moviedata:/data:ro movieplexx-mcp serve
 ```
 
+## Container image (GHCR)
+
+Multiarch images (`linux/amd64`, `linux/arm64`) are published to the GitHub
+Container Registry by `.github/workflows/docker-publish.yml`:
+
+```
+ghcr.io/zahlenhelfer/movieplexx-mcp
+```
+
+| Tag | Published on | Meaning |
+| --- | --- | --- |
+| `dev` | every push to `main` | latest development build |
+| `X.Y.Z`, `X.Y`, `X` | a published GitHub release `vX.Y.Z` | semver-pinned build |
+| `latest` | a published GitHub release | newest release (never `dev`) |
+
+Pull and run the published image instead of building locally:
+
+```bash
+docker pull ghcr.io/zahlenhelfer/movieplexx-mcp:latest
+
+# scraper (hourly loop)
+docker run -d --rm -v moviedata:/data ghcr.io/zahlenhelfer/movieplexx-mcp:latest scrape --loop
+
+# MCP server (launched on demand by the client)
+docker run -i --rm -v moviedata:/data:ro ghcr.io/zahlenhelfer/movieplexx-mcp:latest serve
+```
+
+The image is public — no `docker login` needed to pull. To cut a release image,
+tag a commit and publish a GitHub release (`vX.Y.Z`); the workflow builds the
+semver and `latest` tags.
+
 ## Metrics
 
 In loop mode the scraper serves Prometheus metrics on `:${METRICS_PORT}/metrics`:
