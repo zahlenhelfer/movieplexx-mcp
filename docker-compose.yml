@@ -1,0 +1,31 @@
+services:
+  scraper:
+    build: .
+    image: movieplexx-mcp
+    command: ["scrape", "--loop"]
+    environment:
+      POLL_INTERVAL_SECONDS: "3600"     # once per hour
+      USER_AGENT: "MovieplexxProgrammMirror/0.1 (+kontakt@zahlenhelfer.de)"
+      LOG_LEVEL: INFO
+    volumes:
+      - moviedata:/data
+    restart: unless-stopped
+
+  # The MCP server is usually launched on demand by the client, e.g.
+  #   docker run -i --rm -v moviedata:/data:ro movieplexx-mcp serve
+  # This service entry is primarily useful for a long-lived SSE deployment.
+  mcp:
+    build: .
+    image: movieplexx-mcp
+    command: ["serve"]
+    stdin_open: true
+    tty: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - moviedata:/data:ro
+    depends_on: [scraper]
+
+volumes:
+  moviedata: {}
