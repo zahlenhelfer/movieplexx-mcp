@@ -50,6 +50,8 @@ DB_PATH=./movieplexx.db uv run movieplexx serve       # MCP server over stdio
 | `MCP_PATH` | `/mcp` | HTTP endpoint path (`http` transport) |
 | `MCP_ALLOWED_HOSTS` | — | Comma-separated `host:port` values to accept in the `Host` header, in addition to `localhost`/`127.0.0.1`/`::1` (`http` transport) |
 | `MCP_AUTH_TOKEN` | — | Bearer token; **required** for `http` transport (fail-closed) |
+| `MCP_TLS_CERTFILE` | — | Path to a TLS certificate; terminates HTTPS directly in the server. Must be set together with `MCP_TLS_KEYFILE` (`http` transport) |
+| `MCP_TLS_KEYFILE` | — | Path to the matching TLS private key (`http` transport) |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 ## MCP tools
@@ -157,6 +159,19 @@ Quick smoke test (no token → 401):
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' http://192.168.1.50:8000/mcp   # 401
+```
+
+Without TLS, the bearer token travels in cleartext on the wire — anyone who can
+observe the LAN segment can read it. To terminate HTTPS directly in the server,
+set `MCP_TLS_CERTFILE`/`MCP_TLS_KEYFILE` (both required together) and use
+`https://` in the client config and smoke test above. A self-signed cert is
+enough for LAN use:
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
+  -keyout mcp-key.pem -out mcp-cert.pem -subj "/CN=192.168.1.50"
+echo "MCP_TLS_CERTFILE=/data/mcp-cert.pem" >> .env
+echo "MCP_TLS_KEYFILE=/data/mcp-key.pem" >> .env
 ```
 
 This is intended for a trusted LAN. For off-LAN access put Tailscale/WireGuard in

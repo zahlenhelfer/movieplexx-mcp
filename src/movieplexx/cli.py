@@ -76,36 +76,33 @@ def cmd_serve(_args: argparse.Namespace) -> int:
         mcp.run()  # local process, spawned by the client
         return 0
     if transport == "http":
-        import uvicorn
-        from mcp.server.transport_security import TransportSecuritySettings
-
-        from .http import BearerAuth
+        from .http import run_http_server
 
         token = os.environ.get("MCP_AUTH_TOKEN")
         if not token:  # fail-closed: never expose the endpoint unauthenticated
             log.error("MCP_AUTH_TOKEN is required for MCP_TRANSPORT=http")
             return 1
-        host = os.environ.get("MCP_HOST", "0.0.0.0")  # noqa: S104 - bound via host port mapping
-        port = int(os.environ.get("MCP_PORT", "8000"))
-        mcp.settings.streamable_http_path = os.environ.get("MCP_PATH", "/mcp")
 
-        # FastMCP() locked transport_security to 127.0.0.1/localhost at construction
-        # time (its default host); extend allowed_hosts with the LAN address(es)
-        # clients actually send as the Host header, so DNS-rebinding protection
-        # stays enabled instead of rejecting every remote request.
+        tls_certfile = os.environ.get("MCP_TLS_CERTFILE")
+        tls_keyfile = os.environ.get("MCP_TLS_KEYFILE")
+        if bool(tls_certfile) != bool(tls_keyfile):  # fail-closed: no half-configured TLS
+            log.error("MCP_TLS_CERTFILE and MCP_TLS_KEYFILE must be set together")
+            return 1
+
         allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
         allowed_hosts += [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
-        mcp.settings.transport_security = TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=allowed_hosts,
-        )
 
-        app = mcp.streamable_http_app()
-        app.add_middleware(BearerAuth, token=token)
-        log.info("serving MCP over http on %s:%d%s", host, port,
-                 mcp.settings.streamable_http_path)
-        uvicorn.run(app, host=host, port=port, log_level=os.environ.get(
-            "LOG_LEVEL", "info").lower())
+        run_http_server(
+            mcp,
+            host=os.environ.get("MCP_HOST", "0.0.0.0"),  # noqa: S104 - bound via host port mapping
+            port=int(os.environ.get("MCP_PORT", "8000")),
+            path=os.environ.get("MCP_PATH", "/mcp"),
+            token=token,
+            allowed_hosts=allowed_hosts,
+            tls_certfile=tls_certfile,
+            tls_keyfile=tls_keyfile,
+            log_level=os.environ.get("LOG_LEVEL", "info").lower(),
+        )
         return 0
     log.error("unknown MCP_TRANSPORT: %r", transport)
     return 1
