@@ -130,7 +130,7 @@ claude mcp add --transport http movieplexx http://192.168.1.50:8000/mcp \
 ```
 
 **Claude Desktop** — no native remote-HTTP client, so use the `mcp-remote`
-stdio↔HTTP bridge instead. Pass the token
+stdio↔HTTP bridge instead. Pass the full header
 through `env` to avoid whitespace-splitting in `--header`:
 
 ```json
@@ -139,8 +139,8 @@ through `env` to avoid whitespace-splitting in `--header`:
     "movieplexx": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "http://192.168.1.50:8000/mcp",
-               "--header", "Authorization:Bearer ${MCP_AUTH_TOKEN}"],
-      "env": { "MCP_AUTH_TOKEN": "<TOKEN>" }
+               "--header", "Authorization:${AUTH_HEADER}"],
+      "env": { "AUTH_HEADER": "Bearer <TOKEN>" }
     }
   }
 }
