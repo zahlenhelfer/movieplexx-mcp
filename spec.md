@@ -555,3 +555,204 @@ Empfehlung: **keinen Browser-UA vortäuschen.** Das erschwert dem Betreiber die 
 - Network-Trace via Chrome DevTools (Vue-Bundle: `theme/solar/js/vue-schedule.js`) — bestätigt, dass die interne API der Datenlieferant der Timetable ist
 
 Alle Fetches durchgeführt am 2026-07-07 gegen die Live-Site.
+
+---
+
+## 10. Feature: Remote-Serving (HTTP-Transport auf NAS)
+
+Stand: 2026-07-11 · Ziel: den MCP-Server dauerhaft auf einem NAS (Docker) laufen
+lassen und vom lokalen Claude (Claude Code **und** Claude Desktop) über das
+LAN erreichen — ohne pro Anfrage einen lokalen Prozess/Container zu starten.
+
+### 10.1 Ausgangslage und Kernänderung
+
+Aktuell spricht der Server **ausschließlich stdio** (`mcp.run()`): der Client
+startet den Prozess lokal (`uv run movieplexx serve` bzw. `docker run -i …`).
+Für den NAS-Betrieb ist das ungeeignet — der Server muss **langlebig über das
+Netz** erreichbar sein. Die MCP-Spezifikation sieht dafür den **Streamable-HTTP**
+-Transport vor (löst das ältere SSE ab). FastMCP kann diesen Transport direkt
+bereitstellen.
+
+**Entscheidung:** HTTP ist **additiv**. stdio bleibt Default (lokale Entwicklung,
+bestehende Client-Configs unverändert). Der Transport wird per Env-Variable
+gewählt.
+
+Netzmodell: **LAN-only**. Auth: **statischer Bearer-Token**. Deployment:
+**generisches docker-compose**. Clients: **Claude Code + Claude Desktop**.
+
+### 10.2 Neue Konfiguration (Environment)
+
+| Variable | Default | Zweck |
+| --- | --- | --- |
+| `MCP_TRANSPORT` | `stdio` | `stdio` \| `http` — wählt den Transport |
+| `MCP_HOST` | `0.0.0.0` | Bind-Adresse im Container (Host-Mapping begrenzt die Exposition) |
+| `MCP_PORT` | `8000` | HTTP-Port |
+| `MCP_PATH` | `/mcp` | Endpoint-Pfad des Streamable-HTTP-Servers |
+| `MCP_AUTH_TOKEN` | — | **Pflicht bei `http`.** Shared Secret für `Authorization: Bearer`. Fehlt er → Start wird verweigert (fail-closed) |
+
+### 10.3 Server-/CLI-Änderungen
+
+`server.py` bleibt inhaltlich unverändert (Tools sind transport-agnostisch, die
+DB-Verbindung ist bereits read-only pro Aufruf → mehrfach-parallele
+HTTP-Requests unkritisch). Neu ist nur die Transport-Wahl in `cli.py serve` plus
+eine Bearer-Middleware.
+
+```python
+# src/movieplexx/http.py  (neu) — Bearer-Auth als ASGI-Middleware
+import hmac
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+
+class BearerAuth(BaseHTTPMiddleware):
+    def __init__(self, app, token: str):
+        super().__init__(app)
+        self._expected = f"Bearer {token}"
+    async def dispatch(self, request, call_next):
+        header = request.headers.get("authorization", "")
+        # constant-time: verhindert Timing-Leak des Tokens
+        if not hmac.compare_digest(header, self._expected):
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        return await call_next(request)
+```
+
+```python
+# src/movieplexx/cli.py  (Ausschnitt: serve)
+import os, sys, uvicorn
+from .server import mcp
+from .http import BearerAuth
+
+def serve() -> None:
+    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        mcp.run()                                   # unverändertes Verhalten
+        return
+    if transport == "http":
+        token = os.getenv("MCP_AUTH_TOKEN")
+        if not token:                               # fail-closed
+            sys.exit("MCP_AUTH_TOKEN is required for MCP_TRANSPORT=http")
+        app = mcp.streamable_http_app()             # Starlette-App von FastMCP
+        app.add_middleware(BearerAuth, token=token)
+        uvicorn.run(
+            app,
+            host=os.getenv("MCP_HOST", "0.0.0.0"),
+            port=int(os.getenv("MCP_PORT", "8000")),
+        )
+        return
+    sys.exit(f"unknown MCP_TRANSPORT: {transport!r}")
+```
+
+Abhängigkeiten: `uvicorn` (kommt i.d.R. transitiv über das `mcp`-SDK; sonst
+explizit in `pyproject.toml` aufnehmen). `starlette` wird von FastMCP ohnehin
+gezogen.
+
+### 10.4 docker-compose (NAS)
+
+Der `mcp`-Service wird vom stdio-On-Demand-Container zum **langlebigen,
+netzgebundenen** Service. Port-Mapping **auf die LAN-IP der NAS** binden (nicht
+`0.0.0.0` des Hosts), damit der Endpoint nicht versehentlich über andere
+Interfaces/WAN erreichbar ist.
+
+```yaml
+services:
+  scraper:
+    image: ghcr.io/zahlenhelfer/movieplexx-mcp:latest
+    command: ["python -m movieplexx.cli scrape --loop"]
+    environment:
+      POLL_INTERVAL_SECONDS: "3600"
+    volumes:
+      - moviedata:/data
+    restart: unless-stopped
+
+  mcp:
+    image: ghcr.io/zahlenhelfer/movieplexx-mcp:latest
+    command: ["python -m movieplexx.cli serve"]
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
+    ports:
+      - "192.168.1.50:8000:8000"   # NUR an die LAN-IP der NAS binden
+    read_only: true
+    volumes:
+      - moviedata:/data:ro
+      - /tmp
+    depends_on: [scraper]
+    restart: unless-stopped
+
+volumes:
+  moviedata: {}
+```
+
+Token wird in einer **gitignore-ten `.env`** neben der compose-Datei gehalten:
+
+```
+MCP_AUTH_TOKEN=$(openssl rand -hex 32)
+```
+
+### 10.5 Client-Anbindung (lokaler Claude)
+
+**Claude Code (CLI)** — nativer HTTP-Transport:
+
+```bash
+claude mcp add --transport http movieplexx http://192.168.1.50:8000/mcp \
+  --header "Authorization: Bearer <TOKEN>"
+```
+
+**Claude Desktop** — kein nativer Remote-HTTP-Client, daher die
+`mcp-remote`-Bridge (stdio ⇄ HTTP) in `claude_desktop_config.json`. Den
+kompletten Header über eine Env-Variable setzen, um das bekannte
+Whitespace-Splitting bei `--header` zu umgehen:
+
+```json
+{
+  "mcpServers": {
+    "movieplexx": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "http://192.168.1.50:8000/mcp",
+        "--header", "Authorization:${AUTH_HEADER}"
+      ],
+      "env": { "AUTH_HEADER": "Bearer <TOKEN>" }
+    }
+  }
+}
+```
+
+### 10.6 Sicherheits-Überlegungen (LAN-Kontext)
+
+- **Fail-closed:** ohne `MCP_AUTH_TOKEN` startet der HTTP-Transport nicht.
+- **Read-only-Blast-Radius:** alle Tools lesen nur; die DB ist `mode=ro`
+  gemountet. Selbst bei Token-Leak im LAN ist der Schaden auf Lesen öffentlicher
+  Kinodaten begrenzt.
+- **LAN-Bindung:** Host-Port an die NAS-LAN-IP binden; **kein** WAN-Port-Forward.
+  Soll es später von außen erreichbar sein → §10.7.
+- **DNS-Rebinding / Origin:** Streamable-HTTP-Server sollten `Host`/`Origin`
+  validieren. FastMCP bringt dafür eine Transport-Security-Middleware mit —
+  erlaubte Hosts/Origins auf die NAS-IP/den Hostnamen beschränken.
+- **Constant-time-Vergleich** des Tokens (`hmac.compare_digest`) gegen
+  Timing-Angriffe.
+- **Rotation:** Token = Env-Var; Rotation = `.env` ändern, `mcp`-Service neu
+  starten, Client-Header aktualisieren.
+
+### 10.7 Ausbaustufen (nicht Teil dieses Features)
+
+- **Off-LAN-Zugriff:** Tailscale/WireGuard vor die NAS setzen — Client zeigt
+  dann auf die Tailnet-IP, Transport/Auth bleiben unverändert.
+- **Öffentliche Exposition:** Reverse-Proxy (Caddy/Traefik) mit TLS + echtem
+  Zertifikat davor; Token-Auth bleibt, zusätzlich Rate-Limit.
+- **OAuth/OIDC:** nur bei Multi-User-/öffentlichem Betrieb sinnvoll.
+
+### 10.8 Umsetzungs-Checkliste
+
+1. `src/movieplexx/http.py` mit `BearerAuth`-Middleware anlegen.
+2. `cli.py serve` um die Transport-Weiche (`MCP_TRANSPORT`) erweitern.
+3. `uvicorn` in `pyproject.toml` sicherstellen.
+4. Neue Env-Vars in Dockerfile-Defaults (nur unkritische wie `MCP_TRANSPORT`,
+   `MCP_PORT`, `MCP_PATH`) und in der README dokumentieren.
+5. `docker-compose.yml` um den netzgebundenen `mcp`-Service + `.env`-Muster
+   ergänzen; `.env` in `.gitignore`.
+6. README: Abschnitt „Remote-Serving auf NAS" inkl. beider Client-Configs.
+7. Smoke-Test: `curl` ohne Token → 401, mit Token → MCP-Handshake; danach
+   `claude mcp add` gegen die LAN-IP.

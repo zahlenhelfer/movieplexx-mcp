@@ -364,6 +364,7 @@ dependencies = [
     { name = "httpx", extra = ["http2"] },
     { name = "mcp" },
     { name = "prometheus-client" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -376,6 +377,7 @@ requires-dist = [
     { name = "httpx", extras = ["http2"], specifier = ">=0.27" },
     { name = "mcp", specifier = ">=1.2" },
     { name = "prometheus-client", specifier = ">=0.20" },
+    { name = "uvicorn", specifier = ">=0.30" },
 ]
 
 [package.metadata.requires-dev]

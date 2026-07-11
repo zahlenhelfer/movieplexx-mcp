@@ -44,6 +44,11 @@ DB_PATH=./movieplexx.db uv run movieplexx serve       # MCP server over stdio
 | `USER_AGENT` | `MovieplexxProgrammMirror/0.1 (+kontakt@zahlenhelfer.de)` | Self-identifying UA |
 | `POLL_INTERVAL_SECONDS` | `3600` | Loop interval for `scrape --loop` |
 | `METRICS_PORT` | `9000` | Prometheus endpoint port in loop mode (`<=0` disables) |
+| `MCP_TRANSPORT` | `stdio` | `serve` transport: `stdio` (local) or `http` (remote) |
+| `MCP_HOST` | `0.0.0.0` | HTTP bind address (`http` transport) |
+| `MCP_PORT` | `8000` | HTTP port (`http` transport) |
+| `MCP_PATH` | `/mcp` | HTTP endpoint path (`http` transport) |
+| `MCP_AUTH_TOKEN` | — | Bearer token; **required** for `http` transport (fail-closed) |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 ## MCP tools
@@ -99,6 +104,55 @@ The MCP server is typically launched on demand by the client, e.g.:
 ```bash
 docker run -i --rm -v moviedata:/data:ro movieplexx-mcp serve
 ```
+
+## Remote serving on a NAS (HTTP transport)
+
+By default `serve` speaks stdio and is spawned locally by the client. To run the
+server long-lived on a NAS and reach it from your local Claude over the LAN, set
+`MCP_TRANSPORT=http`. The endpoint is protected by a static bearer token and
+**refuses to start without `MCP_AUTH_TOKEN`**.
+
+Generate a token and start the networked `mcp` service (see `docker-compose.yml`,
+which binds the port to the NAS LAN IP — adjust `192.168.1.50`):
+
+```bash
+echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env   # .env is gitignored
+docker compose up -d mcp
+```
+
+Register the remote server with your local Claude:
+
+**Claude Code (CLI)** — native HTTP transport:
+
+```bash
+claude mcp add --transport http movieplexx http://192.168.1.50:8000/mcp \
+  --header "Authorization: Bearer <TOKEN>"
+```
+
+**Claude Desktop** — via the `mcp-remote` stdio↔HTTP bridge. Pass the full header
+through `env` to avoid whitespace-splitting in `--header`:
+
+```json
+{
+  "mcpServers": {
+    "movieplexx": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://192.168.1.50:8000/mcp",
+               "--header", "Authorization:${AUTH_HEADER}"],
+      "env": { "AUTH_HEADER": "Bearer <TOKEN>" }
+    }
+  }
+}
+```
+
+Quick smoke test (no token → 401):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' http://192.168.1.50:8000/mcp   # 401
+```
+
+This is intended for a trusted LAN. For off-LAN access put Tailscale/WireGuard in
+front; for public exposure add a TLS reverse proxy. See `spec.md` §10.
 
 ## Container image (GHCR)
 

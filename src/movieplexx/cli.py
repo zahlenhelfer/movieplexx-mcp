@@ -70,8 +70,31 @@ def cmd_scrape(args: argparse.Namespace) -> int:
 def cmd_serve(_args: argparse.Namespace) -> int:
     from .server import mcp
 
-    mcp.run()  # stdio
-    return 0
+    transport = os.environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        mcp.run()  # local process, spawned by the client
+        return 0
+    if transport == "http":
+        import uvicorn
+
+        from .http import BearerAuth
+
+        token = os.environ.get("MCP_AUTH_TOKEN")
+        if not token:  # fail-closed: never expose the endpoint unauthenticated
+            log.error("MCP_AUTH_TOKEN is required for MCP_TRANSPORT=http")
+            return 1
+        host = os.environ.get("MCP_HOST", "0.0.0.0")  # noqa: S104 - bound via host port mapping
+        port = int(os.environ.get("MCP_PORT", "8000"))
+        mcp.settings.streamable_http_path = os.environ.get("MCP_PATH", "/mcp")
+        app = mcp.streamable_http_app()
+        app.add_middleware(BearerAuth, token=token)
+        log.info("serving MCP over http on %s:%d%s", host, port,
+                 mcp.settings.streamable_http_path)
+        uvicorn.run(app, host=host, port=port, log_level=os.environ.get(
+            "LOG_LEVEL", "info").lower())
+        return 0
+    log.error("unknown MCP_TRANSPORT: %r", transport)
+    return 1
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -83,7 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Run forever, polling every POLL_INTERVAL_SECONDS")
     p_scrape.set_defaults(func=cmd_scrape)
 
-    p_serve = sub.add_parser("serve", help="Run the MCP server (stdio)")
+    p_serve = sub.add_parser("serve", help="Run the MCP server (MCP_TRANSPORT=stdio|http)")
     p_serve.set_defaults(func=cmd_serve)
 
     return parser

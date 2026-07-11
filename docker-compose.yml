@@ -14,21 +14,30 @@ services:
       - moviedata:/data
     restart: unless-stopped
 
-  # The MCP server is usually launched on demand by the client, e.g.
+  # Long-lived MCP server over Streamable-HTTP, for remote use (e.g. on a NAS).
+  # Bind the host port to the LAN IP only (replace 192.168.1.50) so the endpoint
+  # is not reachable over other interfaces / WAN. Requires MCP_AUTH_TOKEN in .env.
+  # For local stdio use instead, the client launches the container on demand:
   #   docker run -i --rm -v moviedata:/data:ro movieplexx-mcp serve
-  # This service entry is primarily useful for a long-lived SSE deployment.
   mcp:
     build: .
     image: movieplexx-mcp
     command: ["serve"]
-    stdin_open: true
-    tty: true
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
+      LOG_LEVEL: INFO
+    ports:
+      - "192.168.1.50:8000:8000"        # NAS LAN IP only — not 0.0.0.0
     read_only: true
     tmpfs:
       - /tmp
     volumes:
       - moviedata:/data:ro
     depends_on: [scraper]
+    restart: unless-stopped
 
 volumes:
   moviedata: {}

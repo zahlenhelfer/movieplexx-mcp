@@ -17,6 +17,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 \
     POLL_INTERVAL_SECONDS=3600 \
     USER_AGENT="MovieplexxProgrammMirror/0.1 (+kontakt@zahlenhelfer.de)" \
     METRICS_PORT=9000 \
+    MCP_TRANSPORT=stdio \
+    MCP_HOST=0.0.0.0 \
+    MCP_PORT=8000 \
+    MCP_PATH=/mcp \
     LOG_LEVEL=INFO
 
 RUN groupadd -r app && useradd -r -g app -d /app -s /sbin/nologin app \
