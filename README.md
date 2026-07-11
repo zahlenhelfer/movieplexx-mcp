@@ -48,6 +48,7 @@ DB_PATH=./movieplexx.db uv run movieplexx serve       # MCP server over stdio
 | `MCP_HOST` | `0.0.0.0` | HTTP bind address (`http` transport) |
 | `MCP_PORT` | `8000` | HTTP port (`http` transport) |
 | `MCP_PATH` | `/mcp` | HTTP endpoint path (`http` transport) |
+| `MCP_ALLOWED_HOSTS` | — | Comma-separated `host:port` values to accept in the `Host` header, in addition to `localhost`/`127.0.0.1`/`::1` (`http` transport) |
 | `MCP_AUTH_TOKEN` | — | Bearer token; **required** for `http` transport (fail-closed) |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
@@ -117,8 +118,14 @@ which binds the port to the NAS LAN IP — adjust `192.168.1.50`):
 
 ```bash
 echo "MCP_AUTH_TOKEN=$(openssl rand -hex 32)" >> .env   # .env is gitignored
+echo "MCP_ALLOWED_HOSTS=192.168.1.50:8000" >> .env      # the LAN address clients connect to
 docker compose up -d mcp
 ```
+
+The server validates the incoming `Host` header (DNS-rebinding protection) and
+otherwise only trusts `localhost`/`127.0.0.1`/`::1`. Without `MCP_ALLOWED_HOSTS`
+set to the address in the URL above, remote requests fail with
+`421 Invalid Host header` even though the bearer token is correct.
 
 Register the remote server with your local Claude:
 

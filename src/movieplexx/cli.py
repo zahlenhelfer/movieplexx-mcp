@@ -77,6 +77,7 @@ def cmd_serve(_args: argparse.Namespace) -> int:
         return 0
     if transport == "http":
         import uvicorn
+        from mcp.server.transport_security import TransportSecuritySettings
 
         from .http import BearerAuth
 
@@ -87,6 +88,18 @@ def cmd_serve(_args: argparse.Namespace) -> int:
         host = os.environ.get("MCP_HOST", "0.0.0.0")  # noqa: S104 - bound via host port mapping
         port = int(os.environ.get("MCP_PORT", "8000"))
         mcp.settings.streamable_http_path = os.environ.get("MCP_PATH", "/mcp")
+
+        # FastMCP() locked transport_security to 127.0.0.1/localhost at construction
+        # time (its default host); extend allowed_hosts with the LAN address(es)
+        # clients actually send as the Host header, so DNS-rebinding protection
+        # stays enabled instead of rejecting every remote request.
+        allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+        allowed_hosts += [h.strip() for h in os.environ.get("MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+        mcp.settings.transport_security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=allowed_hosts,
+        )
+
         app = mcp.streamable_http_app()
         app.add_middleware(BearerAuth, token=token)
         log.info("serving MCP over http on %s:%d%s", host, port,

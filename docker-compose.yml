@@ -27,6 +27,7 @@ services:
       MCP_TRANSPORT: http
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8000"
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?set MCP_ALLOWED_HOSTS to the NAS LAN IP:port in .env}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?set MCP_AUTH_TOKEN in .env}
       LOG_LEVEL: INFO
     ports:
