@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
 import sys
@@ -99,17 +98,6 @@ def cmd_serve(_args: argparse.Namespace) -> int:
     return 1
 
 
-def cmd_connect(args: argparse.Namespace) -> int:
-    from .proxy import run_proxy
-
-    try:
-        asyncio.run(run_proxy(args.url))
-    except SystemExit as exc:
-        log.error(str(exc))
-        return 1
-    return 0
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="movieplexx")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -121,13 +109,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_serve = sub.add_parser("serve", help="Run the MCP server (MCP_TRANSPORT=stdio|http)")
     p_serve.set_defaults(func=cmd_serve)
-
-    p_connect = sub.add_parser(
-        "connect",
-        help="Bridge stdio to a remote HTTP MCP server, authenticating with MCP_AUTH_TOKEN",
-    )
-    p_connect.add_argument("url", help="Remote Streamable-HTTP endpoint, e.g. http://nas:8000/mcp")
-    p_connect.set_defaults(func=cmd_connect)
 
     return parser
 
